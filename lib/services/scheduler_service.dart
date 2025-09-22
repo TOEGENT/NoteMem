@@ -1,28 +1,35 @@
 import '../models/note.dart';
 
 class SchedulerService {
-  static final List<int> defaultIntervals = [480, 2880, 8640]; // minutes
-
-  static DateTime calculateNextReview(Note note, List<int> intervals) {
-    final currentInterval = intervals[note.intervalIndex];
-    return DateTime.now().add(Duration(minutes: currentInterval));
-  }
+  static const List<int> defaultIntervals = [1, 2, 3]; // минуты (8ч, 48ч, 144ч)
 
   static void updateNoteAfterReview(Note note, bool remembered, List<int> intervals) {
-    if (remembered) {
-      // Move to next interval
-      note.intervalIndex = (note.intervalIndex + 1).clamp(0, intervals.length - 1);
-    } else {
-      // Reset to first interval
+    if (!remembered) {
+      // Если забыли - начинаем заново
       note.intervalIndex = 0;
+    } else {
+      // Если помним - переходим к следующему интервалу
+      note.intervalIndex = (note.intervalIndex + 1) % intervals.length;
     }
     
-    note.nextReview = calculateNextReview(note, intervals);
-    note.isLearned = !remembered;
+    // Устанавливаем следующее повторение
+    final minutes = intervals[note.intervalIndex];
+    note.nextReview = DateTime.now().add(Duration(minutes: minutes));
+    
+    // Помечаем как изученную только если прошли хотя бы один интервал
+    note.isLearned = note.intervalIndex >= 0;
   }
 
-  static List<Note> getNotesDueForReview(List<Note> notes) {
-    final now = DateTime.now();
-    return notes.where((note) => note.nextReview.isBefore(now)).toList();
+  static void postponeReview(Note note, int minutes) {
+    note.nextReview = DateTime.now().add(Duration(minutes: minutes));
+  }
+
+  static String getIntervalName(int index, List<int> intervals) {
+    if (index < 0 || index >= intervals.length) return 'Новый';
+    
+    final minutes = intervals[index];
+    if (minutes < 60) return '$minutes мин';
+    if (minutes < 1440) return '${minutes ~/ 60} ч';
+    return '${minutes ~/ 1440} д';
   }
 }

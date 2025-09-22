@@ -35,7 +35,7 @@ class StorageService {
   Future<List<int>> getIntervals() async {
     await init();
     final intervalsJson = _prefs?.getString(_intervalsKey);
-    if (intervalsJson == null) return [480, 2880, 8640]; // minutes
+    if (intervalsJson == null) return [1, 2, 3]; // minutes
     
     final List<dynamic> intervalsList = json.decode(intervalsJson);
     return intervalsList.cast<int>();

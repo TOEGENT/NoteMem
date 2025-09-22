@@ -395,7 +395,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                 initialScale: PhotoViewComputedScale.contained,
                 heroAttributes: PhotoViewHeroAttributes(tag: widget.imagePaths[index]),
                 loadingBuilder: (context, event) => Center(
-                  child: Container(
+                  child: SizedBox(
                     width: 50,
                     height: 50,
                     child: const CircularProgressIndicator(color: Colors.white),

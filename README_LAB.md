@@ -24,6 +24,6 @@
 | 12:00-13:30 | Прикладная физическая культура     | Прикладная физическая культура |                                  | Прикладная физическая культура       | Алгебра               |                 |                     |
 | 14:15-15:45 |Алгебра                             | Анализ данных                  |  Прикладная физическая культура  |                                      |                       |                 |                     |
 ##### :warning::warning::warning:
-(Ссылка на мой проект)[https://github.com/TOEGENT/NoteMem/]
-[Логотип](https://github.githubassets.com/assets/GitHub-Mark-ea2971cee799.png)
+Ссылка на мой проект : https://github.com/TOEGENT/NoteMem/
+https://github.githubassets.com/assets/GitHub-Mark-ea2971cee799.png
 

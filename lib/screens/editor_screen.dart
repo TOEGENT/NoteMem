@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:photo_view/photo_view.dart';
 import '../models/note.dart';
 
 class EditorScreen extends StatefulWidget {
@@ -115,7 +114,6 @@ class _EditorScreenState extends State<EditorScreen> {
 
       return newPath;
     } catch (e) {
-      // Если не удалось сохранить, используем оригинальный путь
       return originalPath;
     }
   }
@@ -123,7 +121,6 @@ class _EditorScreenState extends State<EditorScreen> {
   void _removeImage(int index) {
     setState(() {
       final String imagePath = _imagePaths.removeAt(index);
-      // Удаляем файл с устройства
       _deleteImageFile(imagePath);
     });
   }
@@ -311,7 +308,7 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 }
 
-class ImageViewerScreen extends StatefulWidget {
+class ImageViewerScreen extends StatelessWidget {
   final String imagePath;
   final int imageIndex;
   final List<String> imagePaths;
@@ -324,21 +321,6 @@ class ImageViewerScreen extends StatefulWidget {
     required this.imagePaths,
     required this.onDelete,
   });
-
-  @override
-  _ImageViewerScreenState createState() => _ImageViewerScreenState();
-}
-
-class _ImageViewerScreenState extends State<ImageViewerScreen> {
-  late PageController _pageController;
-  late int _currentIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentIndex = widget.imageIndex;
-    _pageController = PageController(initialPage: widget.imageIndex);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -365,7 +347,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                     TextButton(
                       onPressed: () {
                         Navigator.pop(context);
-                        widget.onDelete();
+                        onDelete();
                       },
                       child: const Text('Удалить', style: TextStyle(color: Colors.red)),
                     ),
@@ -376,72 +358,14 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          PageView.builder(
-            controller: _pageController,
-            itemCount: widget.imagePaths.length,
-            onPageChanged: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            itemBuilder: (context, index) {
-              return PhotoView(
-                imageProvider: FileImage(File(widget.imagePaths[index])),
-                backgroundDecoration: const BoxDecoration(color: Colors.black),
-                minScale: PhotoViewComputedScale.contained,
-                maxScale: PhotoViewComputedScale.covered * 3.0,
-                initialScale: PhotoViewComputedScale.contained,
-                heroAttributes: PhotoViewHeroAttributes(tag: widget.imagePaths[index]),
-                loadingBuilder: (context, event) => Center(
-                  child: SizedBox(
-                    width: 50,
-                    height: 50,
-                    child: const CircularProgressIndicator(color: Colors.white),
-                  ),
-                ),
-              );
-            },
-          ),
-          
-          if (widget.imagePaths.length > 1)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 16,
-              left: 0,
-              right: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        '${_currentIndex + 1} / ${widget.imagePaths.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
+      body: Center(
+        child: InteractiveViewer(
+          panEnabled: true,
+          minScale: 0.1,
+          maxScale: 4.0,
+          child: Image.file(File(imagePath)),
+        ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
   }
 }

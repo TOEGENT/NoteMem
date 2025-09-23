@@ -1,7 +1,7 @@
 import '../models/note.dart';
 
 class SchedulerService {
-  static const List<int> defaultIntervals = [1, 2, 3]; // минуты (8ч, 48ч, 144ч)
+  static const List<int> defaultIntervals = [20, 1440, 2880,10080]; // минуты (8ч, 48ч, 144ч)
 
   static void updateNoteAfterReview(Note note, bool remembered, List<int> intervals) {
     if (!remembered) {

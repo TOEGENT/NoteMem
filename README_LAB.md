@@ -25,5 +25,5 @@
 | 14:15-15:45 |Алгебра                             | Анализ данных                  |  Прикладная физическая культура  |                                      |                       |                 |                     |
 ##### :warning::warning::warning:
 Ссылка на мой проект : https://github.com/TOEGENT/NoteMem/
-[Логотип](https://api.chatkeeper.app/avatar/chat/chat-1002017149974.jpeg))
+[Логотип](https://api.chatkeeper.app/avatar/chat/chat-1002017149974.jpeg)
 

@@ -1,0 +1,531 @@
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
+import '../models/note.dart';
+
+class EditorScreen extends StatefulWidget {
+  final Note? note;
+  final Function(Note) onSave;
+
+  const EditorScreen({
+    super.key,
+    this.note,
+    required this.onSave,
+  });
+
+  @override
+  _EditorScreenState createState() => _EditorScreenState();
+}
+
+class _EditorScreenState extends State<EditorScreen> {
+  final _titleController = TextEditingController();
+  final _contentController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+  List<String> _imagePaths = [];
+
+  late Note _backupNoteData;
+
+  bool get _hasChanges {
+    if (widget.note == null) {
+      return _titleController.text.isNotEmpty ||
+          _contentController.text.isNotEmpty ||
+          _imagePaths.isNotEmpty;
+    }
+    return _titleController.text != widget.note!.title ||
+        _contentController.text != widget.note!.content ||
+        !_listEquals(_imagePaths, widget.note!.imagePaths);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.note != null) {
+      _titleController.text = widget.note!.title;
+      _contentController.text = widget.note!.content;
+      _imagePaths = List.from(widget.note!.imagePaths);
+    }
+    _backupNoteData = _makeBackup();
+    _titleController.addListener(_backupNote);
+    _contentController.addListener(_backupNote);
+  }
+
+  Note _makeBackup() {
+    return Note(
+      id: widget.note?.id,
+      title: _titleController.text,
+      content: _contentController.text,
+      imagePaths: List.from(_imagePaths),
+      createdAt: widget.note?.createdAt ?? DateTime.now(),
+      nextReview: widget.note?.nextReview ?? DateTime.now(),
+      intervalIndex: widget.note?.intervalIndex ?? 0,
+      isLearned: widget.note?.isLearned ?? false,
+    );
+  }
+
+  void _backupNote() {
+    _backupNoteData = _makeBackup();
+  }
+
+  void _saveNote() {
+    final title = _titleController.text.trim();
+    final content = _contentController.text.trim();
+
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Введите заголовок')),
+      );
+      return;
+    }
+
+    final note = Note(
+      id: widget.note?.id,
+      title: title,
+      content: content,
+      imagePaths: _imagePaths,
+      createdAt: widget.note?.createdAt ?? DateTime.now(),
+      nextReview: widget.note?.nextReview ?? DateTime.now(),
+      intervalIndex: widget.note?.intervalIndex ?? 0,
+      isLearned: widget.note?.isLearned ?? false,
+    );
+
+    widget.onSave(note);
+    _backupNoteData = _makeBackup();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Сохранено')),
+    );
+  }
+
+  Future<bool> _onWillPop() async {
+    if (_hasChanges) {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Сохранить изменения?'),
+          content: const Text('Есть несохранённые изменения.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Отмена')),
+            TextButton(onPressed: () => Navigator.pop(context, 'no'), child: const Text('Не сохранять')),
+            TextButton(onPressed: () => Navigator.pop(context, 'yes'), child: const Text('Сохранить')),
+          ],
+        ),
+      );
+      if (result == 'yes') {
+        _saveNote();
+        return true;
+      } else if (result == 'no') {
+        return true;
+      } else {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _addImage() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        final String savedImagePath = await _saveImageToAppDirectory(image.path);
+        setState(() {
+          _imagePaths.add(savedImagePath);
+        });
+        _backupNote();
+      }
+    } catch (e) {
+      _showErrorSnackbar('Ошибка при выборе изображения: $e');
+    }
+  }
+
+  Future<void> _takePhoto() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        final String savedImagePath = await _saveImageToAppDirectory(image.path);
+        setState(() {
+          _imagePaths.add(savedImagePath);
+        });
+        _backupNote();
+      }
+    } catch (e) {
+      _showErrorSnackbar('Ошибка при съемке фото: $e');
+    }
+  }
+
+  Future<String> _saveImageToAppDirectory(String originalPath) async {
+    try {
+      final Directory appDir = await getApplicationDocumentsDirectory();
+      final String fileName = 'image_${DateTime.now().millisecondsSinceEpoch}${path.extension(originalPath)}';
+      final String newPath = path.join(appDir.path, fileName);
+
+      final File originalFile = File(originalPath);
+      await originalFile.copy(newPath);
+
+      return newPath;
+    } catch (e) {
+      return originalPath;
+    }
+  }
+
+  void _removeImageAt(int index) {
+    setState(() {
+      final String imagePath = _imagePaths.removeAt(index);
+      _deleteImageFile(imagePath);
+    });
+    _backupNote();
+  }
+
+  Future<void> _deleteImageFile(String imagePath) async {
+    try {
+      final File imageFile = File(imagePath);
+      if (await imageFile.exists()) await imageFile.delete();
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red, duration: const Duration(seconds: 3)),
+    );
+  }
+
+  Future<void> _openImageFullScreen(int index) async {
+    final result = await Navigator.push<List<String>?>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ImageViewerScreen(
+          initialIndex: index,
+          imagePaths: List.from(_imagePaths),
+        ),
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _imagePaths = result;
+      });
+      _backupNote();
+    }
+  }
+
+  Widget _buildImageThumbnail(String imagePath, int index) {
+    return GestureDetector(
+      onTap: () => _openImageFullScreen(index),
+      child: Stack(
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            margin: const EdgeInsets.only(right: 8.0),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey[300]!),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(
+                File(imagePath),
+                width: 100,
+                height: 100,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    color: Colors.grey[200],
+                    child: const Icon(Icons.error, color: Colors.red),
+                  );
+                },
+              ),
+            ),
+          ),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: GestureDetector(
+              onTap: () => _removeImageAt(index),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
+                padding: const EdgeInsets.all(4),
+                child: const Icon(
+                  Icons.close,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  void dispose() {
+    _titleController.removeListener(_backupNote);
+    _contentController.removeListener(_backupNote);
+    _titleController.dispose();
+    _contentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.note == null ? 'Новый конспект' : 'Редактирование'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _saveNote,
+              tooltip: 'Сохранить',
+            ),
+          ],
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              TextField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  hintText: 'Заголовок конспекта',
+                  border: OutlineInputBorder(),
+                  labelText: 'Заголовок',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: TextField(
+                  controller: _contentController,
+                  decoration: const InputDecoration(
+                    hintText: 'Содержание конспекта...',
+                    border: OutlineInputBorder(),
+                    labelText: 'Содержание',
+                    alignLabelWithHint: true,
+                  ),
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                ),
+              ),
+              if (_imagePaths.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text('Прикрепленные изображения:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 110,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _imagePaths.length,
+                    itemBuilder: (context, index) => _buildImageThumbnail(_imagePaths[index], index),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        ),
+        floatingActionButton: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            FloatingActionButton(
+              onPressed: _takePhoto,
+              heroTag: 'camera_fab',
+              mini: true,
+              tooltip: 'Сделать фото',
+              child: const Icon(Icons.camera_alt),
+            ),
+            const SizedBox(height: 16),
+            FloatingActionButton(
+              onPressed: _addImage,
+              heroTag: 'gallery_fab',
+              tooltip: 'Добавить из галереи',
+              child: const Icon(Icons.photo_library),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ImageViewerScreen extends StatefulWidget {
+  final int initialIndex;
+  final List<String> imagePaths;
+
+  const ImageViewerScreen({
+    super.key,
+    required this.initialIndex,
+    required this.imagePaths,
+  });
+
+  @override
+  _ImageViewerScreenState createState() => _ImageViewerScreenState();
+}
+
+class _ImageViewerScreenState extends State<ImageViewerScreen> {
+  late PageController _pageController;
+  late List<String> _paths;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _paths = List.from(widget.imagePaths);
+    _currentIndex = widget.initialIndex.clamp(0, _paths.isEmpty ? 0 : _paths.length - 1);
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  Future<void> _deleteCurrentImage() async {
+    if (_paths.isEmpty) return;
+
+    final int indexToDelete = _currentIndex;
+    final String pathToDelete = _paths[indexToDelete];
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить изображение?'),
+        content: const Text('Это действие нельзя отменить.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Удалить', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final File file = File(pathToDelete);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    setState(() {
+      _paths.removeAt(indexToDelete);
+      if (_paths.isEmpty) {
+        Navigator.pop(context, _paths);
+        return;
+      }
+      if (_currentIndex >= _paths.length) {
+        _currentIndex = _paths.length - 1;
+      }
+      _pageController = PageController(initialPage: _currentIndex);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () => Navigator.pop(context, _paths),
+        ),
+        actions: [
+          if (_paths.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.white),
+              onPressed: _deleteCurrentImage,
+            ),
+        ],
+      ),
+      body: _paths.isEmpty
+          ? const Center(child: Text('Нет изображений', style: TextStyle(color: Colors.white)))
+          : PageView.builder(
+              controller: _pageController,
+              itemCount: _paths.length,
+              onPageChanged: (idx) => setState(() => _currentIndex = idx),
+              itemBuilder: (context, index) {
+                final imgPath = _paths[index];
+                return Center(
+                  child: InteractiveViewer(
+                    panEnabled: true,
+                    minScale: 0.1,
+                    maxScale: 4.0,
+                    child: Image.file(
+                      File(imgPath),
+                      errorBuilder: (context, error, stackTrace) => const SizedBox(
+                        child: Center(child: Icon(Icons.broken_image, color: Colors.white, size: 48)),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+      bottomNavigationBar: _paths.isEmpty
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('${_currentIndex + 1} / ${_paths.length}', style: const TextStyle(color: Colors.white)),
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: () {
+                            if (_currentIndex > 0) {
+                              _pageController.previousPage(duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+                            }
+                          },
+                          icon: const Icon(Icons.chevron_left, color: Colors.white),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            if (_currentIndex < _paths.length - 1) {
+                              _pageController.nextPage(duration: const Duration(milliseconds: 200), curve: Curves.easeInOut);
+                            }
+                          },
+                          icon: const Icon(Icons.chevron_right, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+}

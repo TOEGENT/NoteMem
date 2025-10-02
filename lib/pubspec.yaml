@@ -1,0 +1,28 @@
+name: NoteMem
+description: Приложение для конспектов с интервальным повторением
+version: 1.0.0
+
+environment:
+  sdk: ">=2.19.0 <3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.5.3
+  image_picker: ^1.2.0
+  path_provider: ^2.1.5
+  path: ^1.9.1
+  intl: ^0.18.0
+  file_picker: ^8.1.2
+  share_plus: ^7.2.0   # or latest version
+  archive: ^3.3.6  # or latest version
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/placeholder.jpg

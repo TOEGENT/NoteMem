@@ -1,3 +1,9 @@
+
+// Изменённый EditorScreen + ImageViewerScreen
+// Убрано мгновенное удаление с миниатюр (иконка закрытия).
+// В Viewer: отключён свайп между изображениями (только стрелки),
+// масштабирование теперь масштабирует весь контейнер изображения вместе с границами.
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -68,15 +74,13 @@ class _EditorScreenState extends State<EditorScreen> {
     _backupNoteData = _makeBackup();
   }
 
-  void _saveNote() {
-    final title = _titleController.text.trim();
+  void _saveNote({bool showSnack = true}) {
+    String title = _titleController.text.trim();
     final content = _contentController.text.trim();
 
     if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Введите заголовок')),
-      );
-      return;
+      final lines = content.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty);
+      title = lines.isNotEmpty ? lines.first : 'Без названия';
     }
 
     final note = Note(
@@ -92,55 +96,42 @@ class _EditorScreenState extends State<EditorScreen> {
 
     widget.onSave(note);
     _backupNoteData = _makeBackup();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Сохранено')),
-    );
+
+    if (showSnack) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сохранено')),
+      );
+    }
   }
 
   Future<bool> _onWillPop() async {
     if (_hasChanges) {
-      final result = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Сохранить изменения?'),
-          content: const Text('Есть несохранённые изменения.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, 'cancel'), child: const Text('Отмена')),
-            TextButton(onPressed: () => Navigator.pop(context, 'no'), child: const Text('Не сохранять')),
-            TextButton(onPressed: () => Navigator.pop(context, 'yes'), child: const Text('Сохранить')),
-          ],
-        ),
-      );
-      if (result == 'yes') {
-        _saveNote();
-        return true;
-      } else if (result == 'no') {
-        return true;
-      } else {
-        return false;
-      }
+      _saveNote(showSnack: true);
     }
     return true;
   }
 
   Future<void> _addImage() async {
     try {
-      final XFile? image = await _picker.pickImage(
-        source: ImageSource.gallery,
+      final List<XFile>? images = await _picker.pickMultiImage(
         maxWidth: 1200,
         maxHeight: 1200,
         imageQuality: 85,
       );
 
-      if (image != null) {
-        final String savedImagePath = await _saveImageToAppDirectory(image.path);
+      if (images != null && images.isNotEmpty) {
+        final List<String> savedImagePaths = [];
+        for (var image in images) {
+          final String savedImagePath = await _saveImageToAppDirectory(image.path);
+          savedImagePaths.add(savedImagePath);
+        }
         setState(() {
-          _imagePaths.add(savedImagePath);
+          _imagePaths.addAll(savedImagePaths);
         });
         _backupNote();
       }
     } catch (e) {
-      _showErrorSnackbar('Ошибка при выборе изображения: $e');
+      _showErrorSnackbar('Ошибка при выборе изображений: $e');
     }
   }
 
@@ -225,52 +216,29 @@ class _EditorScreenState extends State<EditorScreen> {
   Widget _buildImageThumbnail(String imagePath, int index) {
     return GestureDetector(
       onTap: () => _openImageFullScreen(index),
-      child: Stack(
-        children: [
-          Container(
+      child: Container(
+        width: 100,
+        height: 100,
+        margin: const EdgeInsets.only(right: 8.0),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey[300]!),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.file(
+            File(imagePath),
             width: 100,
             height: 100,
-            margin: const EdgeInsets.only(right: 8.0),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.file(
-                File(imagePath),
-                width: 100,
-                height: 100,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: Colors.grey[200],
-                    child: const Icon(Icons.error, color: Colors.red),
-                  );
-                },
-              ),
-            ),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                color: Colors.grey[200],
+                child: const Icon(Icons.error, color: Colors.red),
+              );
+            },
           ),
-          Positioned(
-            top: 4,
-            right: 4,
-            child: GestureDetector(
-              onTap: () => _removeImageAt(index),
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
-                padding: const EdgeInsets.all(4),
-                child: const Icon(
-                  Icons.close,
-                  size: 16,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -299,13 +267,7 @@ class _EditorScreenState extends State<EditorScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.note == null ? 'Новый конспект' : 'Редактирование'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.save),
-              onPressed: _saveNote,
-              tooltip: 'Сохранить',
-            ),
-          ],
+          actions: [], // значок "сохранить" удалён
         ),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -468,22 +430,45 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
           ? const Center(child: Text('Нет изображений', style: TextStyle(color: Colors.white)))
           : PageView.builder(
               controller: _pageController,
+              physics:
+                  const NeverScrollableScrollPhysics(), // отключаем свайп; навигация только стрелками
               itemCount: _paths.length,
               onPageChanged: (idx) => setState(() => _currentIndex = idx),
               itemBuilder: (context, index) {
                 final imgPath = _paths[index];
-                return Center(
-                  child: InteractiveViewer(
-                    panEnabled: true,
-                    minScale: 0.1,
-                    maxScale: 4.0,
-                    child: Image.file(
-                      File(imgPath),
-                      errorBuilder: (context, error, stackTrace) => const SizedBox(
-                        child: Center(child: Icon(Icons.broken_image, color: Colors.white, size: 48)),
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    return Center(
+                      child: InteractiveViewer(
+                        panEnabled: true,
+                        scaleEnabled: true,
+                        boundaryMargin: const EdgeInsets.all(40),
+                        minScale: 0.5,
+                        maxScale: 4.0,
+                        child: Container(
+                          width: constraints.maxWidth,
+                          height: constraints.maxHeight,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white24),
+                            color: Colors.black,
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.contain,
+                            alignment: Alignment.center,
+                            child: Image.file(
+                              File(imgPath),
+                              // let FittedBox handle sizing so whole container scales visibly
+                              errorBuilder: (context, error, stackTrace) => const SizedBox(
+                                child: Center(child: Icon(Icons.broken_image, color: Colors.white, size: 48)),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),

@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
@@ -6,7 +5,6 @@ import '../models/note.dart';
 import '../services/storage_service.dart';
 import '../services/scheduler_service.dart';
 import '../services/export_service.dart';
-import '../services/import_service.dart';
 import 'editor_screen.dart';
 import '../widgets/note_card.dart';
 import 'dart:convert';
@@ -191,7 +189,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _storage.saveNotes(_notes);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('⏰ Отложено на $minutes минут'),
+          content: Text('Отложено на $minutes минут'),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -206,8 +204,8 @@ class _HomeScreenState extends State<HomeScreen> {
       SnackBar(
         content: Text(
           remembered
-              ? '✅ Повторить ${intervalName.toLowerCase()}'
-              : '🔄 Начинаем заново. ${intervalName.toLowerCase()}',
+              ? 'Повторить ${intervalName.toLowerCase()}'
+              : 'Начинаем заново. ${intervalName.toLowerCase()}',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -236,7 +234,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _storage.saveNotes(_notes);
   }
 
-  // === Импорт/Экспорт ===
   Future<void> _importNotes() async {
     setState(() => _isImporting = true);
     try {
@@ -247,64 +244,177 @@ class _HomeScreenState extends State<HomeScreen> {
         withData: true,
       );
       if (result == null) return;
+
       final picked = result.files.single;
-      List<int>? bytes = picked.bytes ?? await File(picked.path!).readAsBytes();
-      if (bytes == null) throw Exception('Не удалось прочитать файл');
+      List<int> bytes;
 
-      final name = (picked.name ?? '').toLowerCase();
+      if (picked.bytes != null) {
+        bytes = picked.bytes!;
+      } else if (picked.path != null) {
+        bytes = await File(picked.path!).readAsBytes();
+      } else {
+        throw Exception('Невозможно прочитать файл');
+      }
+
       List<Note> parsedNotes = [];
+      final appDoc = await getApplicationDocumentsDirectory();
+      final tmpDir = Directory(
+          p.join(appDoc.path, 'import_tmp_${DateTime.now().millisecondsSinceEpoch}'));
+      await tmpDir.create(recursive: true);
 
-      if (name.endsWith('.zip')) {
+      List<Map<String, dynamic>> _extractList(dynamic decoded) {
+        if (decoded == null) return [];
+        if (decoded is List) {
+          return decoded.where((e) => e is Map).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        }
+        if (decoded is Map) {
+          for (final key in ['data', 'notes', 'items', 'payload', 'export']) {
+            if (decoded.containsKey(key) && decoded[key] is List) {
+              return (decoded[key] as List).where((e) => e is Map).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            }
+          }
+          for (final v in decoded.values) {
+            if (v is List) {
+              return v.where((e) => e is Map).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            }
+          }
+          final mapValues = decoded.values.where((v) => v is Map).map((v) => Map<String, dynamic>.from(v as Map)).toList();
+          if (mapValues.isNotEmpty) return mapValues;
+        }
+        return [];
+      }
+
+      if ((picked.name ?? '').toLowerCase().endsWith('.zip')) {
         final archive = ZipDecoder().decodeBytes(bytes);
-        final appDoc = await getApplicationDocumentsDirectory();
-        final tmpDir = Directory(p.join(appDoc.path, 'import_tmp_${DateTime.now().millisecondsSinceEpoch}'));
-        await tmpDir.create(recursive: true);
-        final List<ArchiveFile> jsonEntries = [];
 
+        final jsonEntries = <ArchiveFile>[];
         for (final entry in archive) {
           if (!entry.isFile) continue;
-          final lower = entry.name.replaceAll('\\', '/').toLowerCase();
-          if (lower.endsWith('.json')) jsonEntries.add(entry);
-          else if (lower.startsWith('media/')) {
-            final outFile = File(p.join(tmpDir.path, p.basename(entry.name)));
-            await outFile.writeAsBytes(entry.content as List<int>);
+          final outFile = File(p.join(tmpDir.path, entry.name));
+          await outFile.parent.create(recursive: true);
+          await outFile.writeAsBytes(entry.content as List<int>);
+          if (entry.name.toLowerCase().endsWith('.json')) {
+            jsonEntries.add(entry);
           }
+        }
+
+        if (jsonEntries.isEmpty) {
+          throw Exception('JSON-файл с заметками не найден в ZIP');
         }
 
         for (final entry in jsonEntries) {
-          final content = utf8.decode(entry.content as List<int>);
-          final decoded = json.decode(content);
-          if (decoded is List) parsedNotes.addAll(decoded.map((e) => Note.fromJson(Map<String, dynamic>.from(e))));
-          else if (decoded is Map) parsedNotes.add(Note.fromJson(Map<String, dynamic>.from(decoded)));
+          try {
+            final jsonContent = utf8.decode(entry.content as List<int>);
+            final decoded = json.decode(jsonContent);
+            final list = _extractList(decoded);
+            if (list.isNotEmpty) {
+              parsedNotes.addAll(list.map((e) => Note.fromJson(e)));
+            } else {
+              if (decoded is Map) {
+                print('JSON ${entry.name} распознан как Map с ключами: ${decoded.keys.toList()}');
+              } else {
+                print('JSON ${entry.name} распознан как ${decoded.runtimeType}');
+              }
+            }
+          } catch (e) {
+            print('Ошибка парсинга JSON ${entry.name}: $e');
+          }
         }
 
         for (var note in parsedNotes) {
-          final List<String> newPaths = [];
-          for (final pathItem in note.imagePaths ?? <String>[]) {
-            final candidate = p.join(tmpDir.path, p.basename(pathItem));
-            if (await File(candidate).exists()) newPaths.add(candidate);
-            else newPaths.add(pathItem);
+          final originalField = (note as dynamic).imagePaths;
+          List<String> originalPaths = [];
+          if (originalField == null) {
+            originalPaths = [];
+          } else if (originalField is String) {
+            originalPaths = originalField.split('|').where((s) => s.isNotEmpty).toList();
+          } else if (originalField is List) {
+            originalPaths = (originalField as List).map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+          } else {
+            originalPaths = [originalField.toString()];
           }
-          note.imagePaths = newPaths;
+
+          final List<String> newPaths = [];
+          for (final pathItem in originalPaths) {
+            final candidate = p.join(tmpDir.path, 'media', p.basename(pathItem));
+            if (await File(candidate).exists()) {
+              newPaths.add(candidate);
+            } else {
+              final alt = p.join(tmpDir.path, pathItem);
+              if (await File(alt).exists()) newPaths.add(alt);
+              else newPaths.add(pathItem);
+            }
+          }
+
+          // Присваиваем в исходном формате через dynamic, чтобы не ломать статическую типизацию модели
+          if (originalField is String) {
+            (note as dynamic).imagePaths = newPaths.join('|');
+          } else {
+            (note as dynamic).imagePaths = newPaths;
+          }
         }
       } else {
-        final decoded = json.decode(utf8.decode(bytes));
-        if (decoded is List) parsedNotes.addAll(decoded.map((e) => Note.fromJson(Map<String, dynamic>.from(e))));
-        else if (decoded is Map) parsedNotes.add(Note.fromJson(Map<String, dynamic>.from(decoded)));
+        final content = utf8.decode(bytes);
+        final decoded = json.decode(content);
+        final list = _extractList(decoded);
+        if (list.isNotEmpty) {
+          parsedNotes.addAll(list.map((e) => Note.fromJson(e)));
+        } else {
+          throw Exception('Не найдено заметок в JSON-файле');
+        }
+
+        for (var note in parsedNotes) {
+          final originalField = (note as dynamic).imagePaths;
+          List<String> originalPaths = [];
+          if (originalField == null) {
+            originalPaths = [];
+          } else if (originalField is String) {
+            originalPaths = originalField.split('|').where((s) => s.isNotEmpty).toList();
+          } else if (originalField is List) {
+            originalPaths = (originalField as List).map((e) => e?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+          } else {
+            originalPaths = [originalField.toString()];
+          }
+
+          final List<String> newPaths = [];
+          for (final pathItem in originalPaths) {
+            final candidate = p.join(tmpDir.path, 'media', p.basename(pathItem));
+            if (await File(candidate).exists()) {
+              newPaths.add(candidate);
+            } else {
+              final alt = p.join(tmpDir.path, pathItem);
+              if (await File(alt).exists()) newPaths.add(alt);
+              else newPaths.add(pathItem);
+            }
+          }
+
+          if (originalField is String) {
+            (note as dynamic).imagePaths = newPaths.join('|');
+          } else {
+            (note as dynamic).imagePaths = newPaths;
+          }
+        }
       }
 
       if (parsedNotes.isEmpty) throw Exception('Не найдено заметок для импорта');
-      final maxId = _notes.isEmpty ? 0 : (_notes.last.id ?? 0);
-      for (var i = 0; i < parsedNotes.length; i++) parsedNotes[i].id = maxId + i + 1;
+
+      final maxId = _notes.isEmpty ? 0 : (_notes.map((n) => n.id ?? 0).fold<int>(0, (a, b) => a > b ? a : b));
+      for (var i = 0; i < parsedNotes.length; i++) {
+        parsedNotes[i].id = maxId + i + 1;
+      }
 
       setState(() {
         _notes.addAll(parsedNotes);
         _applyFilters();
       });
       await _storage.saveNotes(_notes);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Импортировано ${parsedNotes.length} конспектов')));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Импортировано ${parsedNotes.length} конспектов')));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка импорта: $e')));
+      print('Import error: $e');
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Ошибка импорта: $e')));
     } finally {
       setState(() => _isImporting = false);
     }

@@ -1,9 +1,3 @@
-
-// Изменённый EditorScreen + ImageViewerScreen
-// Убрано мгновенное удаление с миниатюр (иконка закрытия).
-// В Viewer: отключён свайп между изображениями (только стрелки),
-// масштабирование теперь масштабирует весь контейнер изображения вместе с границами.
-
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -30,6 +24,8 @@ class _EditorScreenState extends State<EditorScreen> {
   final _contentController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
   List<String> _imagePaths = [];
+  // пути, которые пользователь удалил в редакторе — удаляем файлы при сохранении
+  final List<String> _deletedImagePaths = [];
 
   late Note _backupNoteData;
 
@@ -74,14 +70,43 @@ class _EditorScreenState extends State<EditorScreen> {
     _backupNoteData = _makeBackup();
   }
 
-  void _saveNote({bool showSnack = true}) {
+  Future<void> _deleteMarkedFiles() async {
+    for (final p in List<String>.from(_deletedImagePaths)) {
+      try {
+        final File f = File(p);
+        if (await f.exists()) await f.delete();
+      } catch (e) {
+        // ignore
+      }
+    }
+    _deletedImagePaths.clear();
+  }
+
+  Future<void> _saveNote({bool showSnack = true}) async {
     String title = _titleController.text.trim();
     final content = _contentController.text.trim();
 
     if (title.isEmpty) {
-      final lines = content.split('\n').map((s) => s.trim()).where((s) => s.isNotEmpty);
+      final lines = content
+          .split('\n')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty);
       title = lines.isNotEmpty ? lines.first : 'Без названия';
     }
+
+    // фильтруем пути — сохраняем только существующие файлы
+    final List<String> existingImagePaths = [];
+    for (final imgPath in _imagePaths) {
+      try {
+        final File f = File(imgPath);
+        if (await f.exists()) {
+          existingImagePaths.add(imgPath);
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    _imagePaths = existingImagePaths;
 
     final note = Note(
       id: widget.note?.id,
@@ -93,6 +118,9 @@ class _EditorScreenState extends State<EditorScreen> {
       intervalIndex: widget.note?.intervalIndex ?? 0,
       isLearned: widget.note?.isLearned ?? false,
     );
+
+    // удаляем реальные файлы, которые пользователь пометил на удаление
+    await _deleteMarkedFiles();
 
     widget.onSave(note);
     _backupNoteData = _makeBackup();
@@ -106,7 +134,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
   Future<bool> _onWillPop() async {
     if (_hasChanges) {
-      _saveNote(showSnack: true);
+      await _saveNote(showSnack: true);
     }
     return true;
   }
@@ -122,8 +150,12 @@ class _EditorScreenState extends State<EditorScreen> {
       if (images != null && images.isNotEmpty) {
         final List<String> savedImagePaths = [];
         for (var image in images) {
-          final String savedImagePath = await _saveImageToAppDirectory(image.path);
-          savedImagePaths.add(savedImagePath);
+          final String? savedImagePath = await _saveImageToAppDirectory(image.path);
+          if (savedImagePath != null) {
+            savedImagePaths.add(savedImagePath);
+          } else {
+            _showErrorSnackbar('Не удалось сохранить одно из изображений.');
+          }
         }
         setState(() {
           _imagePaths.addAll(savedImagePaths);
@@ -145,36 +177,50 @@ class _EditorScreenState extends State<EditorScreen> {
       );
 
       if (image != null) {
-        final String savedImagePath = await _saveImageToAppDirectory(image.path);
-        setState(() {
-          _imagePaths.add(savedImagePath);
-        });
-        _backupNote();
+        final String? savedImagePath = await _saveImageToAppDirectory(image.path);
+        if (savedImagePath != null) {
+          setState(() {
+            _imagePaths.add(savedImagePath);
+          });
+          _backupNote();
+        } else {
+          _showErrorSnackbar('Не удалось сохранить фото.');
+        }
       }
     } catch (e) {
       _showErrorSnackbar('Ошибка при съемке фото: $e');
     }
   }
 
-  Future<String> _saveImageToAppDirectory(String originalPath) async {
+  // Теперь возвращаем null в случае ошибки — это гарантирует, что
+  // путь в temp не попадёт в список изображений.
+  Future<String?> _saveImageToAppDirectory(String originalPath) async {
     try {
       final Directory appDir = await getApplicationDocumentsDirectory();
-      final String fileName = 'image_${DateTime.now().millisecondsSinceEpoch}${path.extension(originalPath)}';
+      final String fileName =
+          'image_${DateTime.now().millisecondsSinceEpoch}${path.extension(originalPath)}';
       final String newPath = path.join(appDir.path, fileName);
 
       final File originalFile = File(originalPath);
-      await originalFile.copy(newPath);
+      if (!await originalFile.exists()) {
+        // файл недоступен — не добавляем
+        return null;
+      }
 
+      await originalFile.copy(newPath);
       return newPath;
     } catch (e) {
-      return originalPath;
+      // не возвращаем оригинал — это источник повреждений
+      return null;
     }
   }
 
+  // Удаление только помечаем; реальное удаление при сохранении
   void _removeImageAt(int index) {
     setState(() {
       final String imagePath = _imagePaths.removeAt(index);
-      _deleteImageFile(imagePath);
+      // помечаем путь на удаление, если файл находится в app documents (а не в temp)
+      _deletedImagePaths.add(imagePath);
     });
     _backupNote();
   }
@@ -201,13 +247,17 @@ class _EditorScreenState extends State<EditorScreen> {
         builder: (context) => ImageViewerScreen(
           initialIndex: index,
           imagePaths: List.from(_imagePaths),
+          deleteFiles: false, // viewer не удаляет файлы физически когда открыт из редактора
         ),
       ),
     );
 
     if (result != null) {
+      // определим, какие пути были удалены в viewer, и пометим их на удаление
+      final removed = _imagePaths.where((p) => !result.contains(p)).toList();
       setState(() {
         _imagePaths = result;
+        _deletedImagePaths.addAll(removed);
       });
       _backupNote();
     }
@@ -340,11 +390,14 @@ class _EditorScreenState extends State<EditorScreen> {
 class ImageViewerScreen extends StatefulWidget {
   final int initialIndex;
   final List<String> imagePaths;
+  // флаг: если true — viewer сам удаляет файлы с диска; если false — только возвращает список без удалённых элементов
+  final bool deleteFiles;
 
   const ImageViewerScreen({
     super.key,
     required this.initialIndex,
     required this.imagePaths,
+    this.deleteFiles = true,
   });
 
   @override
@@ -384,15 +437,16 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
 
     if (confirm != true) return;
 
-    try {
-      final File file = File(pathToDelete);
-      if (await file.exists()) {
-        await file.delete();
+    if (widget.deleteFiles) {
+      try {
+        final File file = File(pathToDelete);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        // ignore
       }
-    } catch (e) {
-      // ignore
     }
-
     setState(() {
       _paths.removeAt(indexToDelete);
       if (_paths.isEmpty) {
@@ -430,8 +484,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
           ? const Center(child: Text('Нет изображений', style: TextStyle(color: Colors.white)))
           : PageView.builder(
               controller: _pageController,
-              physics:
-                  const NeverScrollableScrollPhysics(), // отключаем свайп; навигация только стрелками
+              physics: const NeverScrollableScrollPhysics(), // отключаем свайп; навигация только стрелками
               itemCount: _paths.length,
               onPageChanged: (idx) => setState(() => _currentIndex = idx),
               itemBuilder: (context, index) {
@@ -459,7 +512,6 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                             alignment: Alignment.center,
                             child: Image.file(
                               File(imgPath),
-                              // let FittedBox handle sizing so whole container scales visibly
                               errorBuilder: (context, error, stackTrace) => const SizedBox(
                                 child: Center(child: Icon(Icons.broken_image, color: Colors.white, size: 48)),
                               ),

@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import '../models/note.dart';
+import 'dart:math';
 
 class EditorScreen extends StatefulWidget {
   final Note? note;
@@ -139,7 +140,7 @@ class _EditorScreenState extends State<EditorScreen> {
     return true;
   }
 
-  Future<void> _addImage() async {
+    Future<void> _addImage() async {
     try {
       final List<XFile>? images = await _picker.pickMultiImage(
         maxWidth: 1200,
@@ -148,28 +149,22 @@ class _EditorScreenState extends State<EditorScreen> {
       );
 
       if (images != null && images.isNotEmpty) {
-        // Удаляем дубликаты из списка XFile, используя Set для уникальности путей
-        final uniqueImages = <XFile>{};
-        final pathsSet = <String>{};
-        for (final img in images) {
-          if (pathsSet.add(img.path)) { // add возвращает true, если элемент был добавлен (т.е. не был дубликатом)
-            uniqueImages.add(img);
-          }
-        }
-
         final List<String> savedImagePaths = [];
-        for (var image in uniqueImages) {
-          final String? savedImagePath = await _saveImageToAppDirectory(image.path);
+        for (var i = 0; i < images.length; i++) {
+          final image = images[i];
+          final uniqueName =
+              'image_${DateTime.now().microsecondsSinceEpoch}_${i}_${Random().nextInt(1 << 32)}${path.extension(image.path)}';
+          final String? savedImagePath = await _saveImageToAppDirectory(image.path, uniqueName);
           if (savedImagePath != null) {
             savedImagePaths.add(savedImagePath);
           } else {
             _showErrorSnackbar('Не удалось сохранить одно из изображений.');
           }
+          // небольшая пауза гарантирует разные microseconds при экстремально быстрой обработке
+          await Future.delayed(const Duration(milliseconds: 1));
         }
         setState(() {
-          // Добавляем только уникальные пути к уже существующим
-          final Set<String> uniquePaths = {..._imagePaths, ...savedImagePaths};
-          _imagePaths = uniquePaths.toList();
+          _imagePaths.addAll(savedImagePaths);
         });
         _backupNote();
       }
@@ -177,7 +172,6 @@ class _EditorScreenState extends State<EditorScreen> {
       _showErrorSnackbar('Ошибка при выборе изображений: $e');
     }
   }
-
   Future<void> _takePhoto() async {
     try {
       final XFile? image = await _picker.pickImage(
@@ -205,23 +199,33 @@ class _EditorScreenState extends State<EditorScreen> {
 
   // Теперь возвращаем null в случае ошибки — это гарантирует, что
   // путь в temp не попадёт в список изображений.
-  Future<String?> _saveImageToAppDirectory(String originalPath) async {
+  Future<String?> _saveImageToAppDirectory(String originalPath, [String? fileName]) async {
     try {
       final Directory appDir = await getApplicationDocumentsDirectory();
-      final String fileName =
-          'image_${DateTime.now().millisecondsSinceEpoch}${path.extension(originalPath)}';
-      final String newPath = path.join(appDir.path, fileName);
+      final String extension = path.extension(originalPath);
+      final String safeFileName = fileName ??
+          'image_${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(1 << 32)}$extension';
+      String newPath = path.join(appDir.path, safeFileName);
 
       final File originalFile = File(originalPath);
       if (!await originalFile.exists()) {
-        // файл недоступен — не добавляем
         return null;
+      }
+
+      // Если файл с таким именем вдруг существует — добавляем суффикс-счётчик
+      var counter = 0;
+      while (await File(newPath).exists()) {
+        counter++;
+        final String nameWithoutExt = path.basenameWithoutExtension(safeFileName);
+        final String candidate = '${nameWithoutExt}_$counter$extension';
+        newPath = path.join(appDir.path, candidate);
+        // предохранитель на случай бесконечной петли
+        if (counter > 1000) break;
       }
 
       await originalFile.copy(newPath);
       return newPath;
     } catch (e) {
-      // не возвращаем оригинал — это источник повреждений
       return null;
     }
   }

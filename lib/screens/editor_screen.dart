@@ -148,8 +148,17 @@ class _EditorScreenState extends State<EditorScreen> {
       );
 
       if (images != null && images.isNotEmpty) {
+        // Удаляем дубликаты из списка XFile, используя Set для уникальности путей
+        final uniqueImages = <XFile>{};
+        final pathsSet = <String>{};
+        for (final img in images) {
+          if (pathsSet.add(img.path)) { // add возвращает true, если элемент был добавлен (т.е. не был дубликатом)
+            uniqueImages.add(img);
+          }
+        }
+
         final List<String> savedImagePaths = [];
-        for (var image in images) {
+        for (var image in uniqueImages) {
           final String? savedImagePath = await _saveImageToAppDirectory(image.path);
           if (savedImagePath != null) {
             savedImagePaths.add(savedImagePath);
@@ -158,7 +167,9 @@ class _EditorScreenState extends State<EditorScreen> {
           }
         }
         setState(() {
-          _imagePaths.addAll(savedImagePaths);
+          // Добавляем только уникальные пути к уже существующим
+          final Set<String> uniquePaths = {..._imagePaths, ...savedImagePaths};
+          _imagePaths = uniquePaths.toList();
         });
         _backupNote();
       }
